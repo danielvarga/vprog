@@ -33,6 +33,7 @@ def test_intersect():
         plt.scatter(ps[:, 0], ps[:, 1])
     plt.show()
 
+
 # test_intersect() ; exit()
 
 
@@ -69,6 +70,12 @@ def find_midpoints(n):
     return mids
 
 
+# we connect (cx, cy), a tuple of Rationals, with every point of the grid.
+# let's just consider the x>cx halfplane.
+# the resulting lines split the halfplane into angles. 
+# we take a ray from each angle.
+# the function returns the equation of each ray,
+# as (slope, intercept) tuple[Fraction].
 def collect_star(cx, cy, n):
     gf = make_grid(n)
     gf = gf.astype(object)
@@ -99,14 +106,11 @@ def digital_line(line, n):
     # evaluate the left hand side on the n x n (Go) grid:
     ev = a * np.arange(n)[:, np.newaxis] + b * np.arange(n)[np.newaxis, :] + c
     evs = np.stack([ev[:-1, :-1], ev[1:, :-1], ev[:-1, 1:], ev[1:, 1:]], axis=-1)
-    assert evs.shape == (n, n, 4) # this is now a Chess grid.
+    assert evs.shape == (n - 1, n - 1, 4) # this is now a Chess grid.
     lows = np.min(evs, axis=2) < 0 # did any of its 4 corners go below 0?
     highs = np.max(evs, axis=2) > 0 # did any of its 4 corners go above 0?
     result = np.logical_and(lows, highs) # both?
     return result
-
-
-digital_line((1, 1, 0.2), 10)
 
 
 def vis_frac_line(line, **kwargs):
@@ -133,17 +137,27 @@ def vis_abc_line(line, **kwargs):
     plt.plot(x, y, **kwargs)
 
 
-# for n in range(2, 25): print(f"{n}\t{len(find_midpoints(n))}")
-
-
+# converts from (p,q) y=p*x+q tuple[Rational] to (a,b,c) a*x+b*y+c=0 tuple[int]
 def frac_to_abc(l):
     p, q = l # y = p*x + q line, p and q are Fractions.
     # we multiply by both denominators and reorder to 0 = ax+by+c :
     return (p.numerator * q.denominator, - p.denominator * q.denominator, p.denominator * q.numerator)
 
 
-def star_test():
+# does not do unique
+def symmetries(c):
+    assert c.shape[1] == c.shape[2]
+    m = c.shape[1]
+    cs = []
+    for cnt in range(4):
+        c_prime = np.rot90(c, k=cnt, axes=(1, 2))
+        cs.append(c_prime)
+    cs = np.array(cs)
+    cs = cs.reshape(-1, m, m)
+    return cs
 
+
+def star_test():
     n = 5
 
     frac_lines = collect_star(Fraction(3, 2), Fraction(10, 3), n)
@@ -160,65 +174,56 @@ def star_test():
     plt.xlim(-0.5, 2*n-0.5)
     plt.ylim(-0.5, 2*n-0.5)
     plt.show()
-    exit()
 
 
 # star_test() ; exit()
 
 
-n, = map(int, sys.argv[1:])
+# it's an m x m cell grid (Chess)
+# and an n=m+1, n x n point grid (Go).
+# all the above functions get n as input, that's one bigger than m.
+m, = map(int, sys.argv[1:])
 
 
-mids = find_midpoints(n)
+def find_all_digital_lines(n):
+    mids = find_midpoints(n)
 
-collection = []
+    collection = []
 
-for mid in mids:
-    # print(mid)
-    frac_lines = collect_star(mid, Fraction(0), n)
-    # for frac_line in frac_lines: print(frac_line)
+    for mid in mids:
+        frac_lines = collect_star(mid, Fraction(0), n)
 
-    abc_lines = [frac_to_abc(l) for l in frac_lines]
-    for abc_line in abc_lines:
-        dl = digital_line(abc_line, n).astype(int)
-        # print(dl)
-        collection.append(dl)
+        abc_lines = [frac_to_abc(l) for l in frac_lines]
+        for abc_line in abc_lines:
+            dl = digital_line(abc_line, n).astype(int)
+            collection.append(dl)
 
+    collection = np.array(collection)
+    collection = symmetries(collection)
 
-# does not do unique
-def symmetries(c):
-    assert c.shape[1] == c.shape[2]
-    m = c.shape[1]
-    cs = []
-    for cnt in range(4):
-        c_prime = np.rot90(c, k=cnt, axes=(1, 2))
-        cs.append(c_prime)
-    cs = np.array(cs)
-    cs = cs.reshape(-1, m, m)
-    return cs
+    collection = collection.reshape(len(collection), -1)
+    collection = np.unique(collection, axis=0)
+    collection = collection.reshape(len(collection), n-1, n-1)
+    return collection
 
 
-collection = np.array(collection)
-collection = symmetries(collection)
+all_digital_lines = find_all_digital_lines(m + 1)
+print(f"grid size = {m}")
+print(f"number of digital lines = {len(all_digital_lines)}")
 
-collection = collection.reshape(len(collection), -1)
-collection = np.unique(collection, axis=0)
-collection = collection.reshape(len(collection), n-1, n-1)
+# flatten them to vectors:
+all_digital_lines = all_digital_lines.reshape(-1, m * m)
 
-print(len(collection))
-exit()
-for dl in collection:
-    print(dl)
-
-exit()
-
-
-x = cp.Variable(k, boolean=True)
-problem = cp.Problem(cp.Minimize(cp.sum(x)), [x @ A >= 1])
-problem.solve(verbose=False)
+x = cp.Variable(len(all_digital_lines), boolean=True)
+problem = cp.Problem(cp.Minimize(cp.sum(x)), [x @ all_digital_lines >= 1])
+problem.solve(solver="CBC", verbose=False)
 x = x.value
-print("solution vector:")
-print(x.astype(int))
-print("minimal set cover:")
-print(A[x.astype(bool)])
+print(f"optimal number of slices = {int(x.sum())}")
+solution = all_digital_lines[x.astype(bool)].reshape(-1, m, m)
 
+# indeed a solution?:
+assert np.all(solution.sum(axis=0) > 0)
+
+for line in solution:
+    print("=====")
+    print(line)
