@@ -188,21 +188,27 @@ m, = map(int, sys.argv[1:])
 def find_all_digital_lines(n):
     mids = find_midpoints(n)
 
-    collection = []
+    collection = set()
 
-    for mid in mids:
+    for indx, mid in enumerate(mids):
         frac_lines = collect_star(mid, Fraction(0), n)
 
         abc_lines = [frac_to_abc(l) for l in frac_lines]
         for abc_line in abc_lines:
             dl = digital_line(abc_line, n).astype(int)
-            collection.append(dl)
+            dl = tuple(dl.flatten().tolist())
+            collection.add(dl)
+        if indx % 100 == 0:
+            print(len(collection), "collected at midpoint", indx, "/", len(mids))
 
-    collection = np.array(collection)
+    collection = np.array(list(collection)).reshape(-1, n-1, n-1)
+    print("# of lines before symmetrization", len(collection))
     collection = symmetries(collection)
 
     collection = collection.reshape(len(collection), -1)
+    print("# of lines before unique", len(collection))
     collection = np.unique(collection, axis=0)
+    print("# of lines after unique", len(collection))
     collection = collection.reshape(len(collection), n-1, n-1)
     return collection
 
@@ -211,12 +217,13 @@ all_digital_lines = find_all_digital_lines(m + 1)
 print(f"grid size = {m}")
 print(f"number of digital lines = {len(all_digital_lines)}")
 
+
 # flatten them to vectors:
 all_digital_lines = all_digital_lines.reshape(-1, m * m)
 
 x = cp.Variable(len(all_digital_lines), boolean=True)
 problem = cp.Problem(cp.Minimize(cp.sum(x)), [x @ all_digital_lines >= 1])
-problem.solve(solver="CBC", verbose=False)
+problem.solve(solver="GUROBI", verbose=True)
 x = x.value
 print(f"optimal number of slices = {int(x.sum())}")
 solution = all_digital_lines[x.astype(bool)].reshape(-1, m, m)
